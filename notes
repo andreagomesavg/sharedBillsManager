@@ -1,0 +1,2 @@
+Cada vez que se hagan cambios en el prompt de la IA:
+npx supabase functions deploy scan-ticket --project-ref gsadyqcbqbyhytwxpoei --no-verify-jwt
