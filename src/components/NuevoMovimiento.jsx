@@ -1,21 +1,22 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
-import { Camera, Loader2, CheckCircle } from 'lucide-react'
+import { Camera, Loader2 } from 'lucide-react'
 
 export default function NuevoMovimiento({ onSuccess }) {
   const [loading, setLoading] = useState(false)
   const [file, setFile] = useState(null)
   const [formData, setFormData] = useState({
-    fecha: new Date().toISOString().split('T')[0], // Hoy por defecto
+    fecha: new Date().toISOString().split('T')[0],
     concepto: '',
     cantidad: '',
-    categoria: '', // Por defecto
-    pagado_por:  'Fondo correspondiente',
+    categoria: '', 
+    pagado_por: 'Fondo correspondiente', // Por defecto sale del bote
     notas: '',
     url_ticket: ''
   })
 
   const [fondos, setFondos] = useState([]);
+  const [miembros, setMiembros] = useState([]);
 
   const [autoFilled, setAutoFilled] = useState({
     concepto: false,
@@ -24,34 +25,37 @@ export default function NuevoMovimiento({ onSuccess }) {
     categoria: false
   })
 
-  // 1. Manejar la selección del archivo
   const handleFileChange = async (e) => {
    if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0]
-      setFile(selectedFile) // Lo guardamos para la UI (mostrar un tick, etc)
-      await scanTicket(selectedFile) // ¡Lanzamos la IA instantáneamente!
+      setFile(selectedFile) 
+      await scanTicket(selectedFile) 
     }
   }
   
   useEffect(() => {
-  const traerFondos = async () => {
-    const { data } = await supabase.from('fondos').select('categoria');
-    if (data) {
-      setFondos(data);
-      // Ponemos el primero por defecto si el estado está vacío
-      if (data.length > 0) setFormData(prev => ({...prev, categoria: data[0].categoria}));
+    const traerDatos = async () => {
+      // 1. Traer fondos
+      const { data: dataFondos } = await supabase.from('fondos').select('categoria').order('categoria')
+      if (dataFondos) {
+        setFondos(dataFondos)
+        if (dataFondos.length > 0) setFormData(prev => ({...prev, categoria: dataFondos[0].categoria}))
+      }
+      
+      // 2. Traer nombres de las personas del grupo
+      const { data: dataMiembros } = await supabase.rpc('get_nombres_mi_grupo')
+      if (dataMiembros) {
+        setMiembros(dataMiembros)
+      }
     }
-  };
-  traerFondos();
-}, []);
+    traerDatos()
+  }, [])
 
-  // 2. La magia: Subir imagen y leer con Groq
- const scanTicket = async (fileToScan) => {
+  const scanTicket = async (fileToScan) => {
     if (!fileToScan) return alert("Selecciona un ticket primero")
     setLoading(true)
 
     try {
-      // A. Subir a Supabase Storage
       const fileExt = fileToScan.name.split('.').pop()
       const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`
       const filePath = `registro_Images/${fileName}`
@@ -62,34 +66,31 @@ export default function NuevoMovimiento({ onSuccess }) {
 
       if (uploadError) throw uploadError
 
-      // B. Obtener URL pública
       const { data: { publicUrl } } = supabase.storage
         .from('tickets')
         .getPublicUrl(filePath)
 
       setFormData(prev => ({ ...prev, url_ticket: publicUrl }))
 
-      // C. ¡NUEVO! Llamar a TU propia API en Supabase (Edge Function)
       const { data: parsedData, error: functionError } = await supabase.functions.invoke('scan-ticket', {
         body: { imageUrl: publicUrl }
       })
 
       if (functionError) throw functionError
 
-      let categoriaDetectada = 'Comida'; // Comida por defecto
-      const tienda = parsedData.supermercado.toLowerCase();
+      let categoriaDetectada = fondos.length > 0 ? fondos[0].categoria : 'Comida' 
+      const tienda = parsedData.supermercado?.toLowerCase() || ''
       
       if (tienda.includes('miscota') || tienda.includes('kiwoko')) {
-        categoriaDetectada = 'Gata';
+        categoriaDetectada = 'Gata'
       } else if (tienda.includes('iberdrola') || tienda.includes('endesa')) {
-        categoriaDetectada = 'Luz'; // Por si en el futuro escaneas facturas de luz
+        categoriaDetectada = 'Luz'
       }
 
-      // D. Autocompletar el formulario con lo que devuelve tu función
       setFormData(prev => ({
         ...prev,
-        concepto: parsedData.supermercado,
-        cantidad: parsedData.total,
+        concepto: parsedData.supermercado || '',
+        cantidad: parsedData.total || '',
         categoria: categoriaDetectada,
         fecha: parsedData.fecha ? parsedData.fecha : new Date().toISOString().split('T')[0]
       }))
@@ -109,18 +110,21 @@ export default function NuevoMovimiento({ onSuccess }) {
     }
   }
 
-  // 3. Guardar en Base de Datos
   const handleSubmit = async (e) => {
     e.preventDefault()
     setLoading(true)
 
     try {
+      // Nos aseguramos de que la cantidad sea negativa si es un gasto (opcional, pero buena práctica)
+      let cantidadFinal = parseFloat(formData.cantidad)
+      if (cantidadFinal > 0) cantidadFinal = -cantidadFinal 
+
       const { error } = await supabase
         .from('movement')
         .insert([{
           fecha: formData.fecha,
           concepto: formData.concepto,
-          cantidad: parseFloat(formData.cantidad),
+          cantidad: cantidadFinal,
           categoria: formData.categoria,
           pagado_por: formData.pagado_por,
           notas: formData.notas,
@@ -130,7 +134,7 @@ export default function NuevoMovimiento({ onSuccess }) {
       if (error) throw error
       
       alert("¡Guardado correctamente!")
-      if(onSuccess) onSuccess() // Para volver al resumen o lista
+      if(onSuccess) onSuccess() 
 
     } catch (error) {
       console.error("Error al guardar:", error)
@@ -143,14 +147,11 @@ export default function NuevoMovimiento({ onSuccess }) {
   return (
     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
       
-      {/* Escáner IA */}
-
-        
-       <div className="mb-6 p-4 bg-blue-50 rounded-xl border border-blue-100 flex flex-col items-center gap-3">
+      <div className="mb-6 p-4 bg-blue-50 rounded-xl border border-blue-100 flex flex-col items-center gap-3">
         {loading ? (
           <div className="flex flex-col items-center text-blue-700 gap-2">
             <Loader2 className="animate-spin" size={28} />
-            <span className="text-sm font-medium">Analizando ticket mágicamente...</span>
+            <span className="text-sm font-medium">Procesando...</span>
           </div>
         ) : (
           <label className="cursor-pointer bg-blue-600 text-white px-4 py-3 w-full rounded-xl flex items-center justify-center gap-2 hover:bg-blue-700 transition shadow-sm font-bold">
@@ -161,10 +162,8 @@ export default function NuevoMovimiento({ onSuccess }) {
         )}
       </div>
       
-      {/* Formulario Manual */}
-     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         
-        {/* Concepto */}
         <div>
           <label className="text-xs text-gray-500 font-bold uppercase flex justify-between">
             Concepto 
@@ -175,31 +174,29 @@ export default function NuevoMovimiento({ onSuccess }) {
             value={formData.concepto} 
             onChange={e => {
               setFormData({...formData, concepto: e.target.value});
-              setAutoFilled({...autoFilled, concepto: false}); // Apaga luz si editas
+              setAutoFilled({...autoFilled, concepto: false});
             }} 
             className={`w-full mt-1 border-b py-2 outline-none transition-colors rounded-t-sm px-2 ${autoFilled.concepto ? 'bg-emerald-50 border-emerald-400 text-emerald-900' : 'border-gray-300 focus:border-blue-600 bg-transparent'}`} 
           />
         </div>
 
         <div className="flex gap-4">
-          {/* Cantidad */}
           <div className="w-1/2">
             <label className="text-xs text-gray-500 font-bold uppercase flex justify-between">
               Cantidad (€)
               {autoFilled.cantidad && <span className="text-emerald-600 text-[10px]">✨ AUTOCOMPLETADO</span>}
             </label>
             <input 
-              type="number" step="0.01" required placeholder="-25.00"
-              value={formData.cantidad} 
+              type="number" step="0.01" required placeholder="25.00"
+              value={Math.abs(formData.cantidad) || ''} 
               onChange={e => {
                 setFormData({...formData, cantidad: e.target.value});
                 setAutoFilled({...autoFilled, cantidad: false});
               }} 
-              className={`w-full mt-1 border-b py-2 outline-none font-bold transition-colors rounded-t-sm px-2 ${parseFloat(formData.cantidad) < 0 && !autoFilled.cantidad ? 'text-red-500' : ''} ${autoFilled.cantidad ? 'bg-emerald-50 border-emerald-400 text-emerald-900' : 'border-gray-300 focus:border-blue-600 bg-transparent'}`} 
+              className={`w-full mt-1 border-b py-2 outline-none font-bold transition-colors rounded-t-sm px-2 ${autoFilled.cantidad ? 'bg-emerald-50 border-emerald-400 text-emerald-900' : 'border-gray-300 focus:border-blue-600 bg-transparent'}`} 
             />
           </div>
 
-          {/* Fecha */}
           <div className="w-1/2">
             <label className="text-xs text-gray-500 font-bold uppercase flex justify-between">
               Fecha
@@ -218,35 +215,46 @@ export default function NuevoMovimiento({ onSuccess }) {
         </div>
 
         <div className="flex gap-4">
-          {/* Categoría */}
+          
+          {/* 1. SELECT DE CATEGORÍA (Relacionado con tus fondos reales) */}
           <div className="w-1/2">
             <label className="text-xs text-gray-500 font-bold uppercase flex justify-between">
-              Categoría
-              {autoFilled.categoria && <span className="text-emerald-600 text-[10px]">✨ AUTOCOMPLETADO</span>}
+              Fondo (Categoría)
+              {autoFilled.categoria && <span className="text-emerald-600 text-[10px]">✨ IA</span>}
             </label>
             <select 
               value={formData.categoria} 
-              onChange={e => setFormData({...formData, categoria: e.target.value})} 
-              className="..."
+              onChange={e => {
+                setFormData({...formData, categoria: e.target.value})
+                setAutoFilled({...autoFilled, categoria: false})
+              }} 
+              className={`w-full mt-1 border-b border-gray-300 py-2 outline-none transition-colors px-2 ${autoFilled.categoria ? 'bg-emerald-50 border-emerald-400 text-emerald-900 font-bold' : 'focus:border-blue-600 bg-transparent'}`}
             >
+              {fondos.length === 0 && <option value="">Sin fondos...</option>}
               {fondos.map(f => (
                 <option key={f.categoria} value={f.categoria}>{f.categoria}</option>
               ))}
             </select>
           </div>
 
-          {/* Pagado Por (Este no lo toca la IA, se queda normal) */}
+          {/* 2. SELECT DE QUIÉN PAGA */}
           <div className="w-1/2">
             <label className="text-xs text-gray-500 font-bold uppercase">Pagado Por</label>
             <select 
               value={formData.pagado_por} 
               onChange={e => setFormData({...formData, pagado_por: e.target.value})} 
-              className="w-full mt-1 border-b border-gray-300 py-2 bg-transparent outline-none px-2"
+              className="w-full mt-1 border-b border-gray-300 py-2 bg-transparent outline-none px-2 focus:border-blue-600 transition-colors"
             >
-              {/* Importante: el value debe coincidir con el estado inicial */}
-              <option value="Fondo correspondiente">Fondo</option>
-              <option value="Valentina">Valentina</option>
-              <option value="Alex">Alex</option>
+              <option value="Fondo correspondiente" className="font-bold text-blue-600">💰 Del Bote</option>
+              
+              <optgroup label="Dinero personal:">
+                {miembros.map(m => (
+                  <option key={m.nombre} value={m.nombre} className="capitalize">
+                    👤 {m.nombre}
+                  </option>
+                ))}
+              </optgroup>
+
             </select>
           </div>
         </div>

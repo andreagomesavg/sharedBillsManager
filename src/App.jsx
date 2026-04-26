@@ -1,17 +1,42 @@
 
 import './App.css'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Resumen from './components/Resumen'
 import Movimientos from './components/Movimientos'
-import { Wallet, ListOrdered, Plus } from 'lucide-react'
+import { Wallet, ListOrdered, Plus, LogOut } from 'lucide-react'
 import NuevoMovimiento from './components/NuevoMovimiento'
+import LoginPage from './components/Pages/LoginPage'
+import { supabase } from './supabase'
+import Navbar from './components/Navbar'
 
 function App() {
+  
   const [activeTab, setActiveTab] = useState('resumen')
+  const [session, setSession] = useState(null)
 
+  useEffect(() => {
+    // Ver si ya estamos logueados al abrir la app
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+    })
+
+    // Escuchar cambios (cuando nos logueamos o salimos)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  console.log("HOLA DESDE APP.JSX, LA SESION ES:", session ? "ACTIVA" : "NULA")
+  // Si no hay sesión, mostramos el Login y NADA MÁS
+  if (!session) {
+    return <LoginPage />
+  }
 
   return (
    <div className="bg-gray-50 min-h-screen pb-20 font-sans text-gray-800">
+    <Navbar session={session} />
       {/* Header */}
       <header className="bg-white shadow-sm p-4 sticky top-0 z-10">
         <h1 className="text-xl font-bold text-center">
@@ -21,9 +46,10 @@ function App() {
 
       {/* Contenido Principal */}
       <main className="p-4">
-        {activeTab === 'nuevo' && <NuevoMovimiento onSuccess={() => setActiveTab('resumen')} />}
-        {activeTab === 'resumen' ? <Resumen /> : <Movimientos />}
-      </main>
+    {activeTab === 'resumen' && <Resumen />}
+    {activeTab === 'movimientos' && <Movimientos />}
+    {activeTab === 'nuevo' && <NuevoMovimiento onSuccess={() => setActiveTab('resumen')} />}
+  </main>
 
       {/* Menú de Navegación Inferior (Mobile) */}
       <nav className="fixed bottom-0 w-full bg-white border-t border-gray-200 flex justify-around p-3 pb-safe z-10">
@@ -47,6 +73,9 @@ function App() {
           <Wallet size={24} />
           <span className="text-xs mt-1 font-medium">Resumen</span>
         </button>
+
+     
+   
 
        
       </nav>

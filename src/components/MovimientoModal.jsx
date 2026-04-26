@@ -2,15 +2,15 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 import { X, Receipt, Edit2, Save, Trash } from 'lucide-react'
 
-
-// Añadimos la prop "onActualizado" para avisarle a la lista principal que algo cambió
 export default function MovimientoModal({ id, onClose, onActualizado }) {
   const [movimiento, setMovimiento] = useState(null)
   const [cargando, setCargando] = useState(true)
-
   const [imagenAmpliada, setImagenAmpliada] = useState(false)
   
-  // Nuevos estados para la edición
+  // Listas dinámicas para los desplegables
+  const [fondos, setFondos] = useState([])
+  const [miembros, setMiembros] = useState([]) // <--- ¡Añadido para los nombres!
+  
   const [modoEdicion, setModoEdicion] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [formData, setFormData] = useState({
@@ -21,6 +21,21 @@ export default function MovimientoModal({ id, onClose, onActualizado }) {
     fecha: ''
   })
 
+  // 1. Cargar los fondos y los miembros disponibles
+  useEffect(() => {
+    const traerDatos = async () => {
+      // Traer fondos
+      const { data: dataFondos } = await supabase.from('fondos').select('categoria').order('categoria')
+      if (dataFondos) setFondos(dataFondos)
+
+      // Traer miembros (usando la función mágica de SQL que creamos)
+      const { data: dataMiembros } = await supabase.rpc('get_nombres_mi_grupo')
+      if (dataMiembros) setMiembros(dataMiembros)
+    }
+    traerDatos()
+  }, [])
+
+  // 2. Cargar los datos del movimiento a editar
   useEffect(() => {
     if (!id) return
 
@@ -36,10 +51,9 @@ export default function MovimientoModal({ id, onClose, onActualizado }) {
         if (error) throw error
         if (data) {
           setMovimiento(data)
-          // Rellenamos el formulario con los datos actuales
           setFormData({
             concepto: data.concepto,
-            cantidad: data.cantidad,
+            cantidad: data.cantidad, 
             categoria: data.categoria,
             pagado_por: data.pagado_por,
             fecha: data.fecha
@@ -53,11 +67,9 @@ export default function MovimientoModal({ id, onClose, onActualizado }) {
     }
 
     obtenerDetalle()
-    // Resetear el modo edición cada vez que se abre un id nuevo
     setModoEdicion(false) 
   }, [id])
 
-  // --- FUNCIÓN PARA GUARDAR EL UPDATE (PUT/PATCH) ---
   const guardarCambios = async (e) => {
     e.preventDefault()
     setGuardando(true)
@@ -76,10 +88,9 @@ export default function MovimientoModal({ id, onClose, onActualizado }) {
 
       if (error) throw error
 
-      // Si todo sale bien:
-      setMovimiento({ ...movimiento, ...formData }) // Actualizamos la vista local
-      setModoEdicion(false) // Salimos del modo edición
-      if (onActualizado) onActualizado() // Avisamos a la lista principal para que se refresque
+      setMovimiento({ ...movimiento, ...formData }) 
+      setModoEdicion(false) 
+      if (onActualizado) onActualizado() 
       
     } catch (error) {
       console.error("Error al actualizar:", error.message)
@@ -89,33 +100,32 @@ export default function MovimientoModal({ id, onClose, onActualizado }) {
     }
   }
 
-  // Manejador para que los inputs actualicen el estado formData
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })
   }
 
-  if (!id) return null
-
   const borrarMovimiento = async () => {
-  const confirmar = window.confirm("¿Seguro que quieres borrar este movimiento?")
-  if (!confirmar) return
+    const confirmar = window.confirm("¿Seguro que quieres borrar este movimiento?")
+    if (!confirmar) return
 
-  try {
-    const { error } = await supabase
-      .from('movement')
-      .delete()
-      .eq('id', id)
+    try {
+      const { error } = await supabase
+        .from('movement')
+        .delete()
+        .eq('id', id)
 
-    if (error) throw error
+      if (error) throw error
 
-    alert("Movimiento borrado")
-    if (onActualizado) onActualizado() // Refresca la lista
-    onClose() // Cierra el modal
-  } catch (error) {
-    console.error("Error al borrar:", error.message)
-    alert("No se pudo borrar el movimiento")
+      alert("Movimiento borrado")
+      if (onActualizado) onActualizado() 
+      onClose() 
+    } catch (error) {
+      console.error("Error al borrar:", error.message)
+      alert("No se pudo borrar el movimiento")
+    }
   }
-}
+
+  if (!id) return null
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
@@ -129,7 +139,7 @@ export default function MovimientoModal({ id, onClose, onActualizado }) {
           <div className="p-12 text-center text-gray-500">Cargando detalles...</div>
         ) : movimiento ? (
           <>
-            <div className="h-48 bg-gray-50 flex items-center justify-center border-b border-gray-100 relative" onClick={() => {
+            <div className="h-48 bg-gray-50 flex items-center justify-center border-b border-gray-100 relative cursor-pointer" onClick={() => {
                 if (movimiento.url_ticket) setImagenAmpliada(true)
               }}>
               {movimiento.url_ticket ? (
@@ -144,9 +154,6 @@ export default function MovimientoModal({ id, onClose, onActualizado }) {
 
             <div className="p-6">
               {modoEdicion ? (
-                // ==========================================
-                // MODO EDICIÓN: FORMULARIO
-                // ==========================================
                 <form onSubmit={guardarCambios} className="space-y-4">
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">Concepto</label>
@@ -167,22 +174,37 @@ export default function MovimientoModal({ id, onClose, onActualizado }) {
                   <div className="flex gap-4">
                     <div className="flex-1">
                       <label className="block text-xs text-gray-500 mb-1">Categoría</label>
-                      <input type="text" name="categoria" value={formData.categoria} onChange={handleChange} className="w-full border border-gray-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none" />
+                      <select 
+                        name="categoria" 
+                        value={formData.categoria || ''} 
+                        onChange={handleChange} 
+                        className="w-full border border-gray-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                      >
+                        {fondos.length === 0 && <option value="">Sin fondos...</option>}
+                        {fondos.map(f => (
+                          <option key={f.categoria} value={f.categoria}>{f.categoria}</option>
+                        ))}
+                      </select>
                     </div>
+
                     <div className="flex-1">
                       <label className="block text-xs text-gray-500 mb-1">Pagado por</label>
-                                        <select 
+                      <select 
                         name="pagado_por" 
-                        // Usamos || '' para evitar que React se queje si el valor es null
                         value={formData.pagado_por || ''} 
                         onChange={handleChange} 
                         className="w-full border border-gray-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                    >
-                        <option value="">Seleccionar...</option>
-                        <option value="Fondo correspondiente">Fondo</option>
-                        <option value="Valentina">Valentina</option>
-                        <option value="Alex">Alex</option>
-                    </select>
+                      >
+                        <option value="Fondo correspondiente" className="font-bold text-blue-600">💰 Bote</option>
+                        <optgroup label="Personal:">
+                          {/* AQUÍ MAPEAMOS LOS NOMBRES REALES */}
+                          {miembros.map(m => (
+                            <option key={m.nombre} value={m.nombre} className="capitalize">
+                              👤 {m.nombre}
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
                     </div>
                   </div>
 
@@ -197,9 +219,6 @@ export default function MovimientoModal({ id, onClose, onActualizado }) {
                   </div>
                 </form>
               ) : (
-                // ==========================================
-                // MODO VISTA: LO QUE YA TENÍAMOS
-                // ==========================================
                 <>
                   <div className="flex justify-between items-start mb-4">
                     <div>
@@ -218,11 +237,10 @@ export default function MovimientoModal({ id, onClose, onActualizado }) {
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-500">Pagado por:</span>
-                      <span className="font-medium">{movimiento.pagado_por}</span>
+                      <span className="font-medium capitalize">{movimiento.pagado_por}</span>
                     </div>
                   </div>
 
-                  {/* BOTÓN PARA ACTIVAR LA EDICIÓN */}
                   <div className="mt-8 flex flex-row">
                     <button 
                       onClick={() => setModoEdicion(true)} 
@@ -232,11 +250,11 @@ export default function MovimientoModal({ id, onClose, onActualizado }) {
                       Editar movimiento
                     </button>
                     <button 
-                    onClick={borrarMovimiento}
-                    className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Borrar"
+                      onClick={borrarMovimiento}
+                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors ml-2"
+                      title="Borrar"
                     >
-                    <Trash size={20} />
+                      <Trash size={20} />
                     </button>
                   </div>
                 </>
@@ -253,16 +271,14 @@ export default function MovimientoModal({ id, onClose, onActualizado }) {
           className="fixed inset-0 bg-black/95 z-[60] flex justify-center items-center p-4 cursor-zoom-out"
           onClick={() => setImagenAmpliada(false)}
         >
-          {/* Botón de cerrar por si el usuario no intuye que tocando el fondo se cierra */}
           <button className="absolute top-4 right-4 text-white/70 hover:text-white p-2">
             <X size={32} />
           </button>
-          
           <img 
             src={movimiento.url_ticket} 
             alt="Ticket ampliado" 
             className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
-            onClick={(e) => e.stopPropagation()} // Evita que se cierre si tocas la foto en sí
+            onClick={(e) => e.stopPropagation()} 
           />
         </div>
       )}

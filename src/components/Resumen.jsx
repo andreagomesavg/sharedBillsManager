@@ -1,90 +1,130 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { Trash2, Plus } from 'lucide-react'
 
 export default function Resumen() {
   const [fondos, setFondos] = useState([])
-  const [cargando, setCargando] = useState(true)
+  // La app empieza en modo "cargando" por defecto
+  const [cargando, setCargando] = useState(true) 
+  
+  const [nuevaCategoria, setNuevaCategoria] = useState('')
+  const [creando, setCreando] = useState(false)
 
-  // Función para obtener los datos reales
-  const obtenerFondos = async () => {
-    try {
-      setCargando(true)
-      const { data, error } = await supabase
-        .from('fondos')
-        .select('*')
-        .order('categoria', { ascending: true })
-
-      if (error) throw error
-      if (data) setFondos(data)
-    } catch (error) {
-      console.error('Error al obtener fondos:', error.message)
-    } finally {
-      setCargando(false)
-    }
+  const cargarFondos = async () => {
+    // ¡Aquí hemos quitado el setCargando(true) para que React no se queje!
+    
+    const { data, error } = await supabase
+      .from('fondos')
+      .select('*')
+      .order('categoria', { ascending: true })
+    
+    if (error) console.error('Error:', error.message)
+    else setFondos(data || [])
+    
+    // Solo lo cambiamos a false cuando ya tenemos los datos
+    setCargando(false)
   }
 
   useEffect(() => {
-    obtenerFondos()
-
-    // OPCIONAL: Escuchar cambios en tiempo real
-    // Si quieres que el saldo cambie solo sin refrescar cuando metas un gasto
-    const subscription = supabase
-      .channel('cambios-fondos')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'fondos' }, () => {
-        obtenerFondos()
-      })
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(subscription)
-    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarFondos()
   }, [])
 
-  // Función para asignar colores y emojis si no vienen de la DB
-  const getEstiloExtra = (categoria) => {
-    const estilos = {
-      'Mascota': { emoji: '🐱', color: 'bg-pink-500' },
-      'Comida': { emoji: '🛒', color: 'bg-amber-400' },
-      'Luz': { emoji: '💡', color: 'bg-yellow-400' },
-      'Casa': { emoji: '🏠', color: 'bg-blue-500' }
+  const agregarFondo = async (e) => {
+    e.preventDefault()
+    if (!nuevaCategoria.trim()) return
+
+    setCreando(true)
+    const { error } = await supabase.from('fondos').insert([
+      { categoria: nuevaCategoria.trim(), saldo_total: 0 }
+    ])
+
+    if (error) {
+      console.error('Error al crear fondo:', error.message)
+      alert("Error al crear la categoría")
+    } else {
+      setNuevaCategoria('')
+      cargarFondos() // Se actualiza la lista en silencio y queda súper fluido
     }
-    return estilos[categoria] || estilos['default']
+    setCreando(false)
   }
 
-  if (cargando && fondos.length === 0) {
-    return <div className="p-4 text-center text-gray-500">Actualizando saldos...</div>
+  const eliminarFondo = async (id, categoria) => {
+    const confirmar = window.confirm(`¿Seguro que quieres borrar el fondo de ${categoria}?`)
+    if (!confirmar) return
+
+    const { error } = await supabase.from('fondos').delete().eq('id', id)
+    
+    if (error) {
+      console.error('Error al borrar:', error.message)
+      alert("Error al borrar el fondo")
+    } else {
+      cargarFondos()
+    }
   }
+
+  if (cargando && fondos.length === 0) return <p className="text-center p-4 text-gray-500">Cargando fondos...</p>
 
   return (
-    <div className="flex flex-col gap-4">
-      {fondos.map((fondo) => {
-        const estilo = getEstiloExtra(fondo.categoria)
-        
-        return (
-          <div 
-            key={fondo.id} 
-            className={`${fondo.color || estilo.color} rounded-2xl p-6 text-white shadow-md flex items-center justify-between transition-all hover:scale-[1.02]`}
+    <div className="space-y-6 mt-4">
+      
+      {/* CREAR NUEVO FONDO */}
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+        <h2 className="text-sm font-bold text-gray-800 mb-3 uppercase tracking-wider">Crear nueva categoría</h2>
+        <form onSubmit={agregarFondo} className="flex gap-2">
+          <input
+            type="text"
+            value={nuevaCategoria}
+            onChange={(e) => setNuevaCategoria(e.target.value)}
+            placeholder="Ej: Vacaciones, Mascotas..."
+            className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 outline-none focus:border-blue-500 transition-colors"
+            required
+          />
+          <button 
+            type="submit" 
+            disabled={creando}
+            className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 transition-colors disabled:bg-blue-300"
           >
-            <div className="flex items-center gap-4">
-              <span className="text-4xl">{fondo.emoji || estilo.emoji}</span>
-              <div>
-                <h2 className="text-xl font-bold uppercase tracking-wider">{fondo.categoria}</h2>
-                <p className="text-sm opacity-90">Saldo disponible</p>
-              </div>
-            </div>
-            <div className="text-2xl font-extrabold text-right">
-              {/* Usamos Number() por si el saldo viene como string y toFixed para los decimales */}
-              {Number(fondo.saldo_total).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
-            </div>
-          </div>
-        )
-      })}
+            <Plus size={20} />
+          </button>
+        </form>
+      </div>
 
-      {fondos.length === 0 && !cargando && (
-        <div className="p-10 text-center border-2 border-dashed border-gray-200 rounded-2xl text-gray-400">
-          No hay fondos configurados en la base de datos.
-        </div>
-      )}
+      {/* LISTA DE FONDOS */}
+      <div>
+        <h2 className="text-xl font-bold text-gray-800 px-1 mb-3">Tus Fondos</h2>
+        
+        {fondos.length === 0 ? (
+          <p className="text-center text-gray-500 py-8 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+            Aún no has creado ninguna categoría. ¡Añade la primera arriba!
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {fondos.map(fondo => (
+              <div key={fondo.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between group">
+                
+                <div className="flex flex-col">
+                  <span className="font-bold text-gray-700">{fondo.categoria}</span>
+                  <span className="text-xs text-gray-400">Total acumulado</span>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <span className="text-xl font-extrabold text-blue-600">{fondo.saldo_total} €</span>
+                  <button 
+                    onClick={() => eliminarFondo(fondo.id, fondo.categoria)}
+                    className="text-gray-300 hover:text-red-500 transition-colors p-2"
+                    title="Borrar fondo"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </div>
+
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      
     </div>
   )
 }
