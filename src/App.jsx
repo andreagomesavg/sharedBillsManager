@@ -1,4 +1,3 @@
-
 import './App.css'
 import { useState, useEffect } from 'react'
 import Resumen from './components/Resumen'
@@ -16,7 +15,8 @@ function App() {
   
   // 1. NUEVO: Estado para saber si venimos del correo
   const [recuperandoPass, setRecuperandoPass] = useState(false)
-useEffect(() => {
+  
+  useEffect(() => {
     // 1. ¡EL TRUCO DETECTIVE! Miramos la URL nada más cargar la app
     const urlHash = window.location.hash
     if (urlHash && urlHash.includes('type=recovery')) {
@@ -51,7 +51,7 @@ useEffect(() => {
   }
 
   return (
-   <div className="bg-gray-50 min-h-screen pb-20 font-sans text-gray-800">
+   <div className="bg-gray-50 min-h-screen pb-24 font-sans text-gray-800 flex flex-col">
     <Navbar session={session} />
       {/* Header */}
       <header className="bg-white shadow-sm p-4 sticky top-0 z-10">
@@ -61,10 +61,19 @@ useEffect(() => {
       </header>
 
       {/* Contenido Principal */}
-      <main className="p-4">
-        {activeTab === 'resumen' && <Resumen />}
-        {activeTab === 'movimientos' && <Movimientos />}
-        {activeTab === 'nuevo' && <NuevoMovimiento onSuccess={() => setActiveTab('resumen')} />}
+      <main className="p-4 flex-grow flex flex-col">
+        <div className="flex-grow">
+          {activeTab === 'resumen' && <Resumen />}
+          {activeTab === 'movimientos' && <Movimientos />}
+          {activeTab === 'nuevo' && <NuevoMovimiento onSuccess={() => setActiveTab('resumen')} />}
+        </div>
+        
+        {/* Footer / Marca de agua */}
+        <div className="mt-12 mb-6 text-center">
+          <span className="text-xs text-gray-400 font-light tracking-widest uppercase opacity-60">
+            © andreagomesavg
+          </span>
+        </div>
       </main>
 
       {/* Menú de Navegación Inferior (Mobile) */}
