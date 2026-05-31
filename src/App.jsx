@@ -2,26 +2,30 @@ import './App.css'
 import { useState, useEffect } from 'react'
 import Resumen from './components/Resumen'
 import Movimientos from './components/Movimientos'
-import { Wallet, ListOrdered, Plus, LogOut } from 'lucide-react'
+import { Wallet, ListOrdered, Plus, LogOut, Star } from 'lucide-react'
 import NuevoMovimiento from './components/NuevoMovimiento'
 import LoginPage from './components/Pages/LoginPage'
 import { supabase } from './supabase'
 import Navbar from './components/Navbar'
 import ActualizarPassword from './components/Pages/ActualizarPassword'
+import Deseos from './components/Pages/Deseos'
 
 function App() {
   const [activeTab, setActiveTab] = useState('resumen')
   const [session, setSession] = useState(null)
   
   // 1. NUEVO: Estado para saber si venimos del correo
-  const [recuperandoPass, setRecuperandoPass] = useState(false)
-  
-  useEffect(() => {
-    // 1. ¡EL TRUCO DETECTIVE! Miramos la URL nada más cargar la app
-    const urlHash = window.location.hash
-    if (urlHash && urlHash.includes('type=recovery')) {
-      setRecuperandoPass(true)
+  // Inicializar desde la URL para evitar setState síncrono dentro del efecto
+  const [recuperandoPass, setRecuperandoPass] = useState(() => {
+    try {
+      const urlHash = window.location.hash
+      return urlHash && urlHash.includes('type=recovery')
+    } catch (e) {
+      return false
     }
+  })
+
+  useEffect(() => {
 
     // 2. Ver si ya estamos logueados al abrir la app
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -66,12 +70,13 @@ function App() {
           {activeTab === 'resumen' && <Resumen />}
           {activeTab === 'movimientos' && <Movimientos />}
           {activeTab === 'nuevo' && <NuevoMovimiento onSuccess={() => setActiveTab('resumen')} />}
+            {activeTab === 'deseos' && <Deseos />}
         </div>
         
         {/* Footer / Marca de agua */}
         <div className="mt-12 mb-6 text-center">
           <span className="text-xs text-gray-400 font-light tracking-widest uppercase opacity-60">
-            © andreagomesavg
+            © valendev 2026 - SharedBills
           </span>
         </div>
       </main>
@@ -85,13 +90,16 @@ function App() {
           <ListOrdered size={24} />
           <span className="text-xs mt-1 font-medium">Movimientos</span>
         </button>
-        
+
         <button 
-          onClick={() => setActiveTab('nuevo')}
-          className="bg-blue-600 text-white px-12 rounded-full shadow-lg -mt-8 hover:bg-blue-700 transition-colors transform active:scale-95"
+          onClick={() => setActiveTab('deseos')}
+          className={`flex flex-col items-center p-2 ${activeTab === 'deseos' ? 'text-blue-600' : 'text-gray-400'}`}
         >
-          <Plus size={28} />
+          <Star size={24} />
+          <span className="text-xs mt-1 font-medium">Deseos</span>
         </button>
+        
+      
         
         <button 
           onClick={() => setActiveTab('resumen')}
@@ -99,6 +107,12 @@ function App() {
         >
           <Wallet size={24} />
           <span className="text-xs mt-1 font-medium">Resumen</span>
+        </button>
+          <button 
+          onClick={() => setActiveTab('nuevo')}
+          className="bg-blue-600 text-white px-12 rounded-full shadow-lg -mt-8 hover:bg-blue-700 transition-colors transform active:scale-95"
+        >
+          <Plus size={28} />
         </button>
       </nav>
     </div>

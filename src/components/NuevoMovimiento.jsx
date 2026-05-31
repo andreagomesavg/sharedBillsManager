@@ -5,18 +5,20 @@ import { Camera, Loader2 } from 'lucide-react'
 export default function NuevoMovimiento({ onSuccess }) {
   const [loading, setLoading] = useState(false)
   const [file, setFile] = useState(null)
+  
+  const [tipoMovimiento, setTipoMovimiento] = useState('gasto') // 'gasto' o 'ingreso'
+
   const [formData, setFormData] = useState({
     fecha: new Date().toISOString().split('T')[0],
     concepto: '',
     cantidad: '',
     categoria: '', 
-    pagado_por: 'Fondo correspondiente', // Por defecto sale del bote
+    pagado_por: 'Fondo correspondiente',
     notas: '',
     url_ticket: ''
   })
 
   const [fondos, setFondos] = useState([]);
-  const [miembros, setMiembros] = useState([]);
 
   const [autoFilled, setAutoFilled] = useState({
     concepto: false,
@@ -35,17 +37,23 @@ export default function NuevoMovimiento({ onSuccess }) {
   
   useEffect(() => {
     const traerDatos = async () => {
-      // 1. Traer fondos
-      const { data: dataFondos } = await supabase.from('fondos').select('categoria').order('categoria')
-      if (dataFondos) {
-        setFondos(dataFondos)
-        if (dataFondos.length > 0) setFormData(prev => ({...prev, categoria: dataFondos[0].categoria}))
-      }
+      // 1. Identificar quién está usando la app
+      const { data: { user } } = await supabase.auth.getUser()
+      const nombreUsuarioActual = user ? user.email.split('@')[0].toLowerCase() : ''
+
+      // 2. Traer los fondos y sus miembros
+      const { data: dataFondos } = await supabase.from('fondos').select('categoria, miembros').order('categoria')
       
-      // 2. Traer nombres de las personas del grupo
-      const { data: dataMiembros } = await supabase.rpc('get_nombres_mi_grupo')
-      if (dataMiembros) {
-        setMiembros(dataMiembros)
+      if (dataFondos) {
+        // 3. Filtramos para mostrar solo los fondos donde el usuario actual esté incluido
+        const misFondos = dataFondos.filter(f => 
+          f.miembros && f.miembros.map(m => m.toLowerCase()).includes(nombreUsuarioActual)
+        )
+        
+        setFondos(misFondos)
+        if (misFondos.length > 0) {
+          setFormData(prev => ({...prev, categoria: misFondos[0].categoria}))
+        }
       }
     }
     traerDatos()
@@ -60,16 +68,10 @@ export default function NuevoMovimiento({ onSuccess }) {
       const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`
       const filePath = `registro_Images/${fileName}`
 
-      const { error: uploadError } = await supabase.storage
-        .from('tickets')
-        .upload(filePath, fileToScan)
-
+      const { error: uploadError } = await supabase.storage.from('tickets').upload(filePath, fileToScan)
       if (uploadError) throw uploadError
 
-      const { data: { publicUrl } } = supabase.storage
-        .from('tickets')
-        .getPublicUrl(filePath)
-
+      const { data: { publicUrl } } = supabase.storage.from('tickets').getPublicUrl(filePath)
       setFormData(prev => ({ ...prev, url_ticket: publicUrl }))
 
       const { data: parsedData, error: functionError } = await supabase.functions.invoke('scan-ticket', {
@@ -83,8 +85,8 @@ export default function NuevoMovimiento({ onSuccess }) {
       
       if (tienda.includes('miscota') || tienda.includes('kiwoko')) {
         categoriaDetectada = 'Gata'
-      } else if (tienda.includes('iberdrola') || tienda.includes('endesa')) {
-        categoriaDetectada = 'Luz'
+      } else if (tienda.includes('iberdrola') || tienda.includes('endesa') || tienda.includes('agua')) {
+        categoriaDetectada = 'Facturas Piso'
       }
 
       setFormData(prev => ({
@@ -115,9 +117,10 @@ export default function NuevoMovimiento({ onSuccess }) {
     setLoading(true)
 
     try {
-      // Nos aseguramos de que la cantidad sea negativa si es un gasto (opcional, pero buena práctica)
-      let cantidadFinal = parseFloat(formData.cantidad)
-      if (cantidadFinal > 0) cantidadFinal = -cantidadFinal 
+      let cantidadFinal = Math.abs(parseFloat(formData.cantidad.toString().replace(',', '.')))
+      if (tipoMovimiento === 'gasto') {
+        cantidadFinal = -cantidadFinal 
+      }
 
       const { error } = await supabase
         .from('movement')
@@ -144,6 +147,12 @@ export default function NuevoMovimiento({ onSuccess }) {
     }
   }
 
+  // --- LÓGICA DINÁMICA DE MIEMBROS ---
+  // Buscamos el fondo que está seleccionado ahora mismo en el formulario
+  const fondoSeleccionadoObj = fondos.find(f => f.categoria === formData.categoria)
+  // Extraemos la lista de miembros de ese fondo en concreto
+  const miembrosDelFondo = fondoSeleccionadoObj?.miembros || []
+
   return (
     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
       
@@ -156,7 +165,7 @@ export default function NuevoMovimiento({ onSuccess }) {
         ) : (
           <label className="cursor-pointer bg-blue-600 text-white px-4 py-3 w-full rounded-xl flex items-center justify-center gap-2 hover:bg-blue-700 transition shadow-sm font-bold">
             <Camera size={22} />
-            {file ? '¡Hacer otra foto!' : 'Hacer foto al ticket'}
+            {file ? '¡Hacer otra foto!' : 'Hacer foto al comprobante'}
             <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
           </label>
         )}
@@ -164,13 +173,30 @@ export default function NuevoMovimiento({ onSuccess }) {
       
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         
+        <div className="flex bg-gray-100 rounded-xl p-1 relative">
+          <button
+            type="button"
+            onClick={() => setTipoMovimiento('gasto')}
+            className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all z-10 ${tipoMovimiento === 'gasto' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            📉 Gasto
+          </button>
+          <button
+            type="button"
+            onClick={() => setTipoMovimiento('ingreso')}
+            className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all z-10 ${tipoMovimiento === 'ingreso' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            📈 Ingreso
+          </button>
+        </div>
+
         <div>
           <label className="text-xs text-gray-500 font-bold uppercase flex justify-between">
             Concepto 
             {autoFilled.concepto && <span className="text-emerald-600 text-[10px]">✨ AUTOCOMPLETADO</span>}
           </label>
           <input 
-            type="text" required placeholder="Ej: Mercadona"
+            type="text" required placeholder="Ej: Mercadona o Bizum"
             value={formData.concepto} 
             onChange={e => {
               setFormData({...formData, concepto: e.target.value});
@@ -193,7 +219,7 @@ export default function NuevoMovimiento({ onSuccess }) {
                 setFormData({...formData, cantidad: e.target.value});
                 setAutoFilled({...autoFilled, cantidad: false});
               }} 
-              className={`w-full mt-1 border-b py-2 outline-none font-bold transition-colors rounded-t-sm px-2 ${autoFilled.cantidad ? 'bg-emerald-50 border-emerald-400 text-emerald-900' : 'border-gray-300 focus:border-blue-600 bg-transparent'}`} 
+              className={`w-full mt-1 border-b py-2 outline-none font-bold transition-colors rounded-t-sm px-2 ${tipoMovimiento === 'gasto' ? 'text-red-600' : 'text-emerald-600'} ${autoFilled.cantidad ? 'bg-emerald-50 border-emerald-400' : 'border-gray-300 focus:border-blue-600 bg-transparent'}`} 
             />
           </div>
 
@@ -215,8 +241,6 @@ export default function NuevoMovimiento({ onSuccess }) {
         </div>
 
         <div className="flex gap-4">
-          
-          {/* 1. SELECT DE CATEGORÍA (Relacionado con tus fondos reales) */}
           <div className="w-1/2">
             <label className="text-xs text-gray-500 font-bold uppercase flex justify-between">
               Fondo (Categoría)
@@ -225,7 +249,8 @@ export default function NuevoMovimiento({ onSuccess }) {
             <select 
               value={formData.categoria} 
               onChange={e => {
-                setFormData({...formData, categoria: e.target.value})
+                // Al cambiar de fondo, reseteamos quién paga por si el usuario anterior no está en el nuevo fondo
+                setFormData({...formData, categoria: e.target.value, pagado_por: 'Fondo correspondiente'})
                 setAutoFilled({...autoFilled, categoria: false})
               }} 
               className={`w-full mt-1 border-b border-gray-300 py-2 outline-none transition-colors px-2 ${autoFilled.categoria ? 'bg-emerald-50 border-emerald-400 text-emerald-900 font-bold' : 'focus:border-blue-600 bg-transparent'}`}
@@ -237,7 +262,6 @@ export default function NuevoMovimiento({ onSuccess }) {
             </select>
           </div>
 
-          {/* 2. SELECT DE QUIÉN PAGA */}
           <div className="w-1/2">
             <label className="text-xs text-gray-500 font-bold uppercase">Pagado Por</label>
             <select 
@@ -248,19 +272,22 @@ export default function NuevoMovimiento({ onSuccess }) {
               <option value="Fondo correspondiente" className="font-bold text-blue-600">💰 Del Bote</option>
               
               <optgroup label="Dinero personal:">
-                {miembros.map(m => (
-                  <option key={m.nombre} value={m.nombre} className="capitalize">
-                    👤 {m.nombre}
+                {miembrosDelFondo.map(miembro => (
+                  <option key={miembro} value={miembro} className="capitalize">
+                    👤 {miembro}
                   </option>
                 ))}
               </optgroup>
-
             </select>
           </div>
         </div>
 
-        <button type="submit" disabled={loading} className="mt-4 w-full bg-gray-900 text-white font-bold py-4 rounded-xl hover:bg-gray-800 transition shadow-lg active:scale-95">
-          {loading ? 'Guardando...' : 'Guardar Movimiento'}
+        <button 
+          type="submit" 
+          disabled={loading} 
+          className={`mt-4 w-full text-white font-bold py-4 rounded-xl transition shadow-lg active:scale-95 ${tipoMovimiento === 'gasto' ? 'bg-gray-900 hover:bg-gray-800' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+        >
+          {loading ? 'Guardando...' : `Guardar ${tipoMovimiento === 'gasto' ? 'Gasto' : 'Ingreso'}`}
         </button>
       </form>
     </div>

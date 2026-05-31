@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
-import { Receipt } from 'lucide-react' // Importamos un icono para cuando no haya foto
+import { Receipt, Search, Filter } from 'lucide-react' // Añadimos Search y Filter
 import MovimientoModal from './MovimientoModal'
 
 export default function Movimientos() {
@@ -8,43 +8,63 @@ export default function Movimientos() {
   const [cargando, setCargando] = useState(true)
   const [movimientoSeleccionadoId, setMovimientoSeleccionadoId] = useState(null)  
 
-  const cargarDatos = async () => {
+  // --- ESTADOS PARA BUSCADOR Y FILTROS ---
+  const [busqueda, setBusqueda] = useState('')
+  const [filtroFondo, setFiltroFondo] = useState('todos')
+  const [filtroUsuario, setFiltroUsuario] = useState('todos')
+  const [orden, setOrden] = useState('recientes')
+
+  // Guardaremos las categorías y usuarios únicos que existan en la BD
+  const [categoriasDisponibles, setCategoriasDisponibles] = useState([])
+  const [usuariosDisponibles, setUsuariosDisponibles] = useState([])
+
+ const cargarDatos = async () => {
     try {
-      const { data, error } = await supabase
-        .from('movement')
-        .select('*')
-        .order('fecha', { ascending: false })
-      if (data) setMovimientos(data)
+      // 1. Identificamos al usuario actual
+      const { data: { user } } = await supabase.auth.getUser()
+      const miNombre = user ? user.email.split('@')[0].toLowerCase() : ''
+
+      // 2. Traemos los fondos para ver cuáles son nuestras categorías
+      const { data: dataFondos } = await supabase.from('fondos').select('categoria, miembros')
+      let misCategorias = []
+      
+      if (dataFondos) {
+        const misFondos = dataFondos.filter(f => f.miembros && f.miembros.map(m => m.toLowerCase()).includes(miNombre))
+        misCategorias = misFondos.map(f => f.categoria)
+      }
+
+      // 3. Traemos SOLO los movimientos de nuestras categorías
+      if (misCategorias.length > 0) {
+        const { data, error } = await supabase
+          .from('movement')
+          .select('*')
+          .in('categoria', misCategorias) // ✨ LA MAGIA: Solo movimientos de mis fondos
+          .order('fecha', { ascending: false })
+          
+        if (error) throw error
+
+        if (data) {
+          setMovimientos(data)
+          
+          const categorias = [...new Set(data.map(m => m.categoria).filter(Boolean))]
+          const usuarios = [...new Set(data.map(m => m.pagado_por).filter(Boolean))]
+          
+          setCategoriasDisponibles(categorias)
+          setUsuariosDisponibles(usuarios)
+        }
+      } else {
+        setMovimientos([]) // Si no estoy en ningún fondo, veo la lista vacía
+      }
     } catch (error) {
-      console.error(error)
+      console.error("Error al obtener los movimientos:", error.message)
     } finally {
       setCargando(false)
     }
   }
 
+  // Ahora solo tenemos UN useEffect (borré el repetido para que vaya más rápido)
   useEffect(() => {
     cargarDatos()
-  }, [])
-
-  useEffect(() => {
-    const obtenerMovimientos = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('movement')
-          .select('*')
-          .order('fecha', { ascending: false })
-
-        if (error) throw error
-        
-        if (data) setMovimientos(data)
-      } catch (error) {
-        console.error("Error al obtener los movimientos:", error.message)
-      } finally {
-        setCargando(false)
-      }
-    }
-
-    obtenerMovimientos()
   }, [])
 
   const formatearFecha = (fechaDate) => {
@@ -53,26 +73,76 @@ export default function Movimientos() {
     return fecha.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
   }
 
+  // --- LÓGICA DE FILTRADO Y ORDENACIÓN ---
+  const movimientosFiltrados = movimientos.filter(mov => {
+    const coincideTexto = mov.concepto?.toLowerCase().includes(busqueda.toLowerCase())
+    const coincideFondo = filtroFondo === 'todos' || mov.categoria === filtroFondo
+    const coincideUsuario = filtroUsuario === 'todos' || mov.pagado_por === filtroUsuario
+    
+    return coincideTexto && coincideFondo && coincideUsuario
+  }).sort((a, b) => {
+    if (orden === 'recientes') return new Date(b.fecha) - new Date(a.fecha)
+    if (orden === 'antiguos') return new Date(a.fecha) - new Date(b.fecha)
+    return 0
+  })
+
   if (cargando) {
     return <div className="p-4 text-center text-sm text-gray-500">Cargando movimientos...</div>
   }
 
-  
-
   return (
    <> 
+      {/* --- BUSCADOR Y FILTROS --- */}
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 space-y-3 mb-4 mt-2">
+        <div className="relative">
+          <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
+          <input 
+            type="text" 
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar movimiento (ej: Mercadona, luz...)" 
+            className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-10 pr-4 py-2 text-sm outline-none focus:border-blue-500"
+          />
+        </div>
+        
+        <div className="flex gap-2 overflow-x-auto pb-1 hide-scrollbar">
+          <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 shrink-0">
+            <Filter size={14} /> Filtrar:
+          </div>
+          
+          <select value={filtroFondo} onChange={(e) => setFiltroFondo(e.target.value)} className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none shrink-0 font-medium text-gray-700">
+            <option value="todos">Fondo: Todos</option>
+            {categoriasDisponibles.map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
+          </select>
+
+          <select value={filtroUsuario} onChange={(e) => setFiltroUsuario(e.target.value)} className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none shrink-0 font-medium text-gray-700">
+            <option value="todos">Usuario: Todos</option>
+            {usuariosDisponibles.map(user => (
+              <option key={user} value={user}>{user}</option>
+            ))}
+          </select>
+
+          <select value={orden} onChange={(e) => setOrden(e.target.value)} className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none shrink-0 font-medium text-gray-700">
+            <option value="recientes">Más recientes</option>
+            <option value="antiguos">Más antiguos</option>
+          </select>
+        </div>
+      </div>
+
+      {/* --- LISTA DE MOVIMIENTOS --- */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        {movimientos.length === 0 ? (
+        {movimientosFiltrados.length === 0 ? (
           <div className="p-6 text-center text-gray-500 text-sm">
-            Aún no hay movimientos registrados.
+            {movimientos.length === 0 ? 'Aún no hay movimientos registrados.' : 'No hay movimientos que coincidan con esta búsqueda.'}
           </div>
         ) : (
-          movimientos.map((mov, index) => (
+          movimientosFiltrados.map((mov, index) => (
             <div 
               key={mov.id} 
               onClick={() => setMovimientoSeleccionadoId(mov.id)}
-              // Opcional: le agregué 'cursor-pointer hover:bg-gray-50' para que se note que es clickeable
-              className={`p-4 flex justify-between items-center border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors ${index === movimientos.length - 1 ? 'border-b-0' : ''}`}
+              className={`p-4 flex justify-between items-center border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors ${index === movimientosFiltrados.length - 1 ? 'border-b-0' : ''}`}
             >
               {/* LADO IZQUIERDO: Foto + Textos */}
               <div className="flex items-center gap-4">
@@ -108,14 +178,13 @@ export default function Movimientos() {
         )}
       </div>
 
-      {/* 2. AQUÍ AGREGAMOS EL MODAL */}
+      {/* --- MODAL DE DETALLES --- */}
       <MovimientoModal 
         id={movimientoSeleccionadoId} 
         onClose={() => setMovimientoSeleccionadoId(null)} 
         onActualizado={cargarDatos}
       />
       
-    {/* 3. Cerramos el fragmento */}
     </>
   )
 }
